@@ -50,12 +50,19 @@ def _get_spreadsheet_id() -> str:
     return _cached_spreadsheet_id
 
 
-def _with_retry(func, *args, retries: int = 2, delay_seconds: float = 1.0, **kwargs):
+def _with_retry(func, *args, retries: int = 4, delay_seconds: float = 1.5, **kwargs):
     """
     Retries a Google API call on transient network/SSL failures
-    (HttpError 5xx, SSLError) before giving up. Production Railway
-    logs showed occasional `ssl.SSLError: record layer failure` on
-    otherwise-healthy connections — a plain retry clears these.
+    (HttpError, SSLError) before giving up, with linearly increasing
+    backoff. Two known transient cases this covers:
+      - `ssl.SSLError: record layer failure` on otherwise-healthy
+        connections.
+      - A spreadsheet just created via Drive's files().create() isn't
+        immediately openable through the Sheets API — Google's own
+        indexing lags by a few seconds, and the Sheets API returns a
+        plain HttpError 400 ("Request contains an invalid argument")
+        during that window rather than a clearer "not ready yet" — so
+        HttpError is retried broadly here, not just on 5xx.
     """
     last_error: Exception | None = None
     for attempt in range(retries + 1):
@@ -64,7 +71,7 @@ def _with_retry(func, *args, retries: int = 2, delay_seconds: float = 1.0, **kwa
         except (SSLError, HttpError) as exc:
             last_error = exc
             if attempt < retries:
-                time.sleep(delay_seconds)
+                time.sleep(delay_seconds * (attempt + 1))
     raise last_error
 
 # HEADER_ROW columns, for reference:
@@ -125,9 +132,13 @@ def _fetch_all_rows() -> list[dict]:
     try:
         meta = _with_retry(service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute)
     except HttpError as exc:
-        if exc.resp.status == 404:
-            # Cached ID is stale (spreadsheet moved/deleted) — clear
-            # the cache and look it up fresh once.
+        if exc.resp.status in (400, 404):
+            # Cached ID is stale (spreadsheet moved/deleted), or the
+            # ID we just got back from find-or-create hasn't finished
+            # indexing on Google's side yet (surfaces as a plain 400).
+            # Clear the cache and look it up fresh once more — by now
+            # _with_retry's own backoff has usually given it enough
+            # time to become readable.
             _cached_spreadsheet_id = None
             spreadsheet_id = _get_spreadsheet_id()
             meta = _with_retry(service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute)
