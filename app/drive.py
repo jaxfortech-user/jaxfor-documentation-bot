@@ -65,7 +65,10 @@ def list_new_files(folder_id: str) -> list[DriveFile]:
     Processed/NeedsReview never get picked up again).
     """
     service = _get_service()
-    query = f"'{folder_id}' in parents and trashed = false"
+    query = (
+        f"'{folder_id}' in parents and trashed = false "
+        f"and mimeType != 'application/vnd.google-apps.folder'"
+    )
     results = (
         service.files()
         .list(q=query, fields="files(id, name, mimeType)", pageSize=100)

@@ -49,7 +49,13 @@ def start_scheduler():
         seconds=POLL_INTERVAL_SECONDS,
         id="poll_drive_folder",
         max_instances=1,  # don't overlap runs if one poll takes longer than the interval
-        next_run_time=None,  # first run scheduled below, not immediately at import time
+        # NOTE: do NOT pass next_run_time=None here — APScheduler treats
+        # that as "leave this job unscheduled" (paused), not "use the
+        # default". That was silently disabling automatic polling
+        # entirely; only the manual /poll-now endpoint ever worked,
+        # because it calls poll_and_process() directly and bypasses the
+        # scheduler. Omitting the argument lets APScheduler schedule the
+        # first run normally (now + interval), which is what we want.
     )
     scheduler.start()
     logger.info("Scheduler started — polling every %d seconds", POLL_INTERVAL_SECONDS)
