@@ -24,7 +24,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jaxfor.main")
 
-from app.pipeline import poll_and_process  # noqa: E402  (after load_dotenv)
+# Must run before anything imports app.drive / app.oauth_drive, both of
+# which read credential files from disk — on Railway those files don't
+# exist until this writes them out from env vars. No-op locally (the
+# *_CONTENT env vars are only set on Railway). See app/bootstrap_credentials.py.
+from app.bootstrap_credentials import bootstrap_credentials  # noqa: E402
+
+bootstrap_credentials()
+
+from app.pipeline import poll_and_process  # noqa: E402  (after load_dotenv + bootstrap_credentials)
 
 app = FastAPI(title="jaxfor-documentation")
 
