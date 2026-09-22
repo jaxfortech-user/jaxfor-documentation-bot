@@ -15,6 +15,7 @@ import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -33,8 +34,27 @@ from app.bootstrap_credentials import bootstrap_credentials  # noqa: E402
 bootstrap_credentials()
 
 from app.pipeline import poll_and_process  # noqa: E402  (after load_dotenv + bootstrap_credentials)
+from app.dashboard_api import router as dashboard_router  # noqa: E402
 
 app = FastAPI(title="jaxfor-documentation")
+
+# CORS: allow the Vercel-hosted dashboard (and local dev) to call
+# these endpoints. DASHBOARD_ORIGIN should be the deployed Vercel URL,
+# e.g. https://jaxfor-dashboard.vercel.app — set it in Railway's env
+# vars once the frontend is deployed. A comma-separated list is also
+# accepted if you need to allow more than one origin (e.g. a preview
+# deployment URL alongside the production one).
+_dashboard_origins = [
+    o.strip() for o in os.environ.get("DASHBOARD_ORIGIN", "http://localhost:3000").split(",") if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_dashboard_origins,
+    allow_methods=["GET"],
+    allow_headers=["X-API-Key", "Content-Type"],
+)
+
+app.include_router(dashboard_router)
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "60"))
 
