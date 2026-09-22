@@ -42,6 +42,7 @@ Env vars (both optional, sensible defaults shown):
 from __future__ import annotations
 
 import os
+import threading
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -53,8 +54,23 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
-_drive_service = None
-_sheets_service = None
+# googleapiclient's transport (httplib2) is NOT thread-safe — Google's
+# own docs say to give each thread its own service/http instance
+# rather than share one across threads. This module used to cache a
+# single process-wide service object, which is fine for a
+# single-threaded script but not for a web server: FastAPI runs sync
+# endpoints in a thread pool, and the dashboard's summary/invoices
+# calls plus the background scheduler's poll thread could all end up
+# calling into the same shared httplib2 connection at once. In
+# production that caused a hard `Fatal Python error: Segmentation
+# fault`, crashing the whole process (and the scheduler with it).
+#
+# Fix: cache one service instance per thread instead of one globally.
+# The token file itself is still shared/reused normally — only the
+# built service object (and its underlying HTTP connection) is
+# per-thread.
+_local = threading.local()
+_token_lock = threading.Lock()
 
 
 def _client_secret_path() -> str:
@@ -74,46 +90,60 @@ def get_credentials() -> Credentials:
     the network for auth at all until the refresh token itself is
     revoked.
     """
-    token_path = _token_path()
-    creds: Credentials | None = None
+    # Guards the token file read/refresh/write so two threads don't
+    # race to refresh and write credentials/token.json at the same
+    # time (which could corrupt it or waste a refresh call). Building
+    # the actual service object below stays per-thread — this lock
+    # only covers the cheap, infrequent token bookkeeping.
+    with _token_lock:
+        token_path = _token_path()
+        creds: Credentials | None = None
 
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            client_secret_path = _client_secret_path()
-            if not os.path.exists(client_secret_path):
-                raise RuntimeError(
-                    f"OAuth client secret not found at '{client_secret_path}'. "
-                    "Create a Desktop-app OAuth Client ID in the Cloud Console "
-                    "and save its JSON there (see app/oauth_drive.py docstring)."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
-            # access_type="offline" + prompt="consent" guarantees a
-            # refresh_token is issued (not just a short-lived access
-            # token), so later runs — including on a headless server —
-            # never need the browser again.
-            creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                client_secret_path = _client_secret_path()
+                if not os.path.exists(client_secret_path):
+                    raise RuntimeError(
+                        f"OAuth client secret not found at '{client_secret_path}'. "
+                        "Create a Desktop-app OAuth Client ID in the Cloud Console "
+                        "and save its JSON there (see app/oauth_drive.py docstring)."
+                    )
+                flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+                # access_type="offline" + prompt="consent" guarantees a
+                # refresh_token is issued (not just a short-lived access
+                # token), so later runs — including on a headless server —
+                # never need the browser again.
+                creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
 
-        os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
-        with open(token_path, "w") as f:
-            f.write(creds.to_json())
+            os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
+            with open(token_path, "w") as f:
+                f.write(creds.to_json())
 
     return creds
 
 
 def get_drive_service():
-    global _drive_service
-    if _drive_service is None:
-        _drive_service = build("drive", "v3", credentials=get_credentials())
-    return _drive_service
+    """
+    Returns a Drive service instance private to the calling thread.
+    See the module-level note above on why this is thread-local
+    rather than a single shared/global instance.
+    """
+    if not hasattr(_local, "drive_service") or _local.drive_service is None:
+        _local.drive_service = build("drive", "v3", credentials=get_credentials())
+    return _local.drive_service
 
 
 def get_sheets_service():
-    global _sheets_service
-    if _sheets_service is None:
-        _sheets_service = build("sheets", "v4", credentials=get_credentials())
-    return _sheets_service
+    """
+    Returns a Sheets service instance private to the calling thread.
+    See the module-level note above on why this is thread-local
+    rather than a single shared/global instance.
+    """
+    if not hasattr(_local, "sheets_service") or _local.sheets_service is None:
+        _local.sheets_service = build("sheets", "v4", credentials=get_credentials())
+    return _local.sheets_service

@@ -11,10 +11,12 @@ export default async function DashboardPage() {
   let error: string | null = null;
 
   try {
-    const [summaryData, invoicesData] = await Promise.all([
-      fetchBackend("/api/summary"),
-      fetchBackend("/api/invoices"),
-    ]);
+    // Fetched sequentially rather than with Promise.all: the backend's
+    // Google API client isn't safe under concurrent calls (see
+    // app/oauth_drive.py), so avoiding overlapping requests here is a
+    // cheap extra safeguard on top of that fix.
+    const summaryData = await fetchBackend("/api/summary");
+    const invoicesData = await fetchBackend("/api/invoices");
     summary = summaryData;
     invoices = invoicesData.invoices;
   } catch (err) {
