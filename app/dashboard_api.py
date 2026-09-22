@@ -201,6 +201,8 @@ def summary(x_api_key: str | None = Header(default=None)):
             amount = 0.0
         by_currency_total[currency] = by_currency_total.get(currency, 0.0) + amount
 
+    spreadsheet_id = _get_spreadsheet_id()
+
     return {
         "total_processed": total,
         "needs_review_count": needs_review,
@@ -208,4 +210,5 @@ def summary(x_api_key: str | None = Header(default=None)):
         "by_vendor": by_vendor,
         "total_amount_by_currency": by_currency_total,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "spreadsheet_url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit",
     }

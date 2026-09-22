@@ -26,4 +26,5 @@ export type Summary = {
   by_vendor: Record<string, number>;
   total_amount_by_currency: Record<string, number>;
   generated_at: string;
+  spreadsheet_url: string;
 };

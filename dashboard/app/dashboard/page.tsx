@@ -25,7 +25,16 @@ export default async function DashboardPage() {
 
   return (
     <div>
-      <h1 className="page-title">Processed Invoices</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <h1 className="page-title" style={{ marginBottom: 0 }}>
+          Processed Invoices
+        </h1>
+        {summary?.spreadsheet_url && (
+          <a className="file-link" href={summary.spreadsheet_url} target="_blank" rel="noreferrer">
+            Open extraction sheet →
+          </a>
+        )}
+      </div>
 
       {error && <div className="error-state">Couldn't load data from the backend: {error}</div>}
 
