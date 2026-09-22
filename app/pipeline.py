@@ -133,6 +133,24 @@ def process_one_file(file: drive.DriveFile, watch_folder_id: str) -> None:
     )
 
 
+def _quarantine_failed_file(file: drive.DriveFile, watch_folder_id: str) -> None:
+    """
+    Moves a file that raised during process_one_file out of the
+    watched folder and into NeedsReview, so it stops being picked up
+    and re-failing on every subsequent poll tick (which is what was
+    happening before this existed — a single bad file, e.g. an
+    unsupported format, would wedge the queue and spam retries
+    forever since process_one_file raises before ever reaching the
+    move-file step).
+
+    No Sheet row is written for these — there's no extraction result
+    to log, just a file a human needs to look at.
+    """
+    _, needs_review_folder_id = _get_routing_folder_ids(watch_folder_id)
+    drive.move_file(file.id, watch_folder_id, needs_review_folder_id)
+    logger.info("Moved %s -> %s (processing failed)", file.name, NEEDS_REVIEW_FOLDER_NAME)
+
+
 def poll_and_process() -> None:
     """
     Called on every scheduler tick. Lists whatever is currently
@@ -160,5 +178,17 @@ def poll_and_process() -> None:
             process_one_file(f, folder_id)
         except Exception:
             # One bad file should never take down the polling loop —
-            # log it and move on to the next file.
+            # log it, quarantine it out of the watched folder so it
+            # doesn't get retried forever, and move on to the next file.
             logger.exception("Failed to process file %s (%s)", f.name, f.id)
+            try:
+                _quarantine_failed_file(f, folder_id)
+            except Exception:
+                # If even the quarantine move fails (transient Drive
+                # error), leave the file in place — it'll be retried
+                # next tick rather than lost.
+                logger.exception(
+                    "Also failed to quarantine %s (%s) — will retry next poll",
+                    f.name,
+                    f.id,
+                )

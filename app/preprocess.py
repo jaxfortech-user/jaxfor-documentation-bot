@@ -36,7 +36,7 @@ class ProcessedPage:
 
 
 def _bytes_to_cv2_image(data: bytes) -> np.ndarray:
-    """Decode raw image bytes (PNG/JPEG) into an OpenCV BGR array."""
+    """Decode raw image bytes (PNG/JPEG/WEBP) into an OpenCV BGR array."""
     arr = np.frombuffer(data, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
@@ -138,17 +138,31 @@ def _process_single_image(img: np.ndarray, page_index: int, original_format: str
     )
 
 
+# Image mime types cv2.imdecode can handle out of the box. webp is
+# included — OpenCV's imdecode supports it via its built-in libwebp
+# bindings, so no extra dependency is needed, just widening this gate.
+# (Files uploaded with a misleading extension, e.g. a .jpg that is
+# actually webp-encoded, are also caught here since we sniff by
+# mime_type as reported by Drive, not by filename.)
+_SUPPORTED_IMAGE_MIME_TYPES = (
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+)
+
+
 def process_document(file_bytes: bytes, mime_type: str) -> list[ProcessedPage]:
     """
     Main entry point. Accepts raw file bytes + mime type
-    (e.g. "application/pdf", "image/png", "image/jpeg") and returns
-    one ProcessedPage per page (PDFs may have multiple pages;
-    images always return exactly one).
+    (e.g. "application/pdf", "image/png", "image/jpeg", "image/webp")
+    and returns one ProcessedPage per page (PDFs may have multiple
+    pages; images always return exactly one).
     """
     if mime_type == "application/pdf":
         raw_images = _pdf_to_images(file_bytes)
         original_format = "pdf"
-    elif mime_type in ("image/png", "image/jpeg", "image/jpg"):
+    elif mime_type in _SUPPORTED_IMAGE_MIME_TYPES:
         raw_images = [_bytes_to_cv2_image(file_bytes)]
         original_format = "image"
     else:
