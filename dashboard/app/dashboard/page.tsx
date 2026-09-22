@@ -1,13 +1,15 @@
 import { fetchBackend } from "@/lib/backend";
-import type { Invoice, Summary } from "@/lib/types";
+import type { Invoice, Summary, SheetTabsResponse } from "@/lib/types";
 import StatCard from "@/components/StatCard";
 import InvoiceTable from "@/components/InvoiceTable";
+import SheetTabPicker from "@/components/SheetTabPicker";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   let summary: Summary | null = null;
   let invoices: Invoice[] = [];
+  let sheetTabs: SheetTabsResponse | null = null;
   let error: string | null = null;
 
   try {
@@ -17,8 +19,10 @@ export default async function DashboardPage() {
     // cheap extra safeguard on top of that fix.
     const summaryData = await fetchBackend("/api/summary");
     const invoicesData = await fetchBackend("/api/invoices");
+    const tabsData = await fetchBackend("/api/sheet-tabs");
     summary = summaryData;
     invoices = invoicesData.invoices;
+    sheetTabs = tabsData;
   } catch (err) {
     error = (err as Error).message;
   }
@@ -29,11 +33,7 @@ export default async function DashboardPage() {
         <h1 className="page-title" style={{ marginBottom: 0 }}>
           Processed Invoices
         </h1>
-        {summary?.spreadsheet_url && (
-          <a className="file-link" href={summary.spreadsheet_url} target="_blank" rel="noreferrer">
-            Open extraction sheet →
-          </a>
-        )}
+        {sheetTabs && <SheetTabPicker spreadsheetUrl={sheetTabs.spreadsheet_url} tabs={sheetTabs.tabs} />}
       </div>
 
       {error && <div className="error-state">Couldn't load data from the backend: {error}</div>}

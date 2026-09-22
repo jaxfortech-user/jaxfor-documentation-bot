@@ -166,6 +166,37 @@ def _fetch_all_rows() -> list[dict]:
     return all_rows
 
 
+@router.get("/sheet-tabs")
+def sheet_tabs(x_api_key: str | None = Header(default=None)):
+    """
+    Lists every tab (vendor) in the output spreadsheet, each with a
+    direct link to that tab (not just the spreadsheet's default/last
+    tab). The extraction sheet has one tab per vendor — as more
+    vendors get invoices processed, more tabs appear here, so the
+    dashboard can let the person pick which one to open instead of
+    always landing on whatever tab was last active in Sheets.
+    """
+    _check_api_key(x_api_key)
+    spreadsheet_id = _get_spreadsheet_id()
+    service = get_sheets_service()
+    meta = _with_retry(
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties(sheetId,title)")
+        .execute
+    )
+    tabs = [
+        {
+            "title": s["properties"]["title"],
+            "url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit#gid={s['properties']['sheetId']}",
+        }
+        for s in meta["sheets"]
+    ]
+    return {
+        "spreadsheet_url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit",
+        "tabs": tabs,
+    }
+
+
 @router.get("/invoices")
 def list_invoices(x_api_key: str | None = Header(default=None)):
     """All processed invoice rows, most recent first."""

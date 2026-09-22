@@ -28,3 +28,10 @@ export type Summary = {
   generated_at: string;
   spreadsheet_url: string;
 };
+
+export type SheetTab = { title: string; url: string };
+
+export type SheetTabsResponse = {
+  spreadsheet_url: string;
+  tabs: SheetTab[];
+};
