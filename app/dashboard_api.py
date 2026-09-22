@@ -22,14 +22,50 @@ Requires env vars:
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException
+from googleapiclient.errors import HttpError
+from ssl import SSLError
 
 from app.oauth_drive import get_sheets_service
 from app.sheets import HEADER_ROW, OUTPUT_FOLDER_NAME, SPREADSHEET_NAME, find_or_create_output_spreadsheet
 
 router = APIRouter(prefix="/api")
+
+# Cached like pipeline.py's module-level caching — avoids a Drive API
+# find-or-create round trip on every dashboard request (which was also
+# hitting occasional transient SSLError: record layer failure from
+# Google's API under repeated connection reuse). Resets on process
+# restart, same as the pipeline's cache.
+_cached_spreadsheet_id: str | None = None
+
+
+def _get_spreadsheet_id() -> str:
+    global _cached_spreadsheet_id
+    if _cached_spreadsheet_id is None:
+        _, spreadsheet_id = _with_retry(find_or_create_output_spreadsheet)
+        _cached_spreadsheet_id = spreadsheet_id
+    return _cached_spreadsheet_id
+
+
+def _with_retry(func, *args, retries: int = 2, delay_seconds: float = 1.0, **kwargs):
+    """
+    Retries a Google API call on transient network/SSL failures
+    (HttpError 5xx, SSLError) before giving up. Production Railway
+    logs showed occasional `ssl.SSLError: record layer failure` on
+    otherwise-healthy connections — a plain retry clears these.
+    """
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except (SSLError, HttpError) as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(delay_seconds)
+    raise last_error
 
 # HEADER_ROW columns, for reference:
 # Processed At, Source File, Document Type, Vendor Name, Invoice Number,
@@ -82,18 +118,31 @@ def _fetch_all_rows() -> list[dict]:
     spreadsheet. Skips the "Unsorted" placeholder tab if it's empty,
     and skips any tab's header row.
     """
-    folder_id, spreadsheet_id = find_or_create_output_spreadsheet()
+    global _cached_spreadsheet_id
+    spreadsheet_id = _get_spreadsheet_id()
     service = get_sheets_service()
-    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+
+    try:
+        meta = _with_retry(service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute)
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            # Cached ID is stale (spreadsheet moved/deleted) — clear
+            # the cache and look it up fresh once.
+            _cached_spreadsheet_id = None
+            spreadsheet_id = _get_spreadsheet_id()
+            meta = _with_retry(service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute)
+        else:
+            raise
+
     tab_titles = [s["properties"]["title"] for s in meta["sheets"]]
 
     all_rows: list[dict] = []
     for tab in tab_titles:
-        result = (
+        result = _with_retry(
             service.spreadsheets()
             .values()
             .get(spreadsheetId=spreadsheet_id, range=f"'{tab}'!A2:P")
-            .execute()
+            .execute
         )
         values = result.get("values", [])
         for row in values:
