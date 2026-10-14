@@ -17,3 +17,8 @@ Thumbs.db
 
 # Test artifacts
 sample_invoice*.png
+
+
+# Local environment files and secrets
+.env.local
+.env.*.local

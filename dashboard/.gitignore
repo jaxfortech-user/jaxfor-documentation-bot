@@ -4,3 +4,6 @@ node_modules/
 .env
 *.log
 .DS_Store
+
+# clerk configuration (can include secrets)
+/.clerk/
