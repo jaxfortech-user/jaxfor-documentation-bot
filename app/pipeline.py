@@ -45,14 +45,21 @@ _processed_folder_id: str | None = None
 _needs_review_folder_id: str | None = None
 
 
+
 def _extraction_result_to_row_dict(result: ExtractionResult) -> dict:
     return {
         "document_type": result.document_type,
         "overall_confidence": result.overall_confidence,
         "needs_review": result.needs_review,
         "disagreements": result.disagreements,
-        "fields": {k: vars(v) for k, v in result.fields.items()},
+        "line_item_reconciliation": result.line_item_reconciliation,
+        "line_item_arithmetic": result.line_item_arithmetic,
+        "fields": {
+            key: vars(value)
+            for key, value in result.fields.items()
+        },
     }
+
 
 
 def _get_spreadsheet_id() -> str:
@@ -103,12 +110,14 @@ def process_one_file(file: drive.DriveFile, watch_folder_id: str) -> None:
     if validation.needs_review:
         logger.info("Flagged for review: %s", "; ".join(validation.reasons))
 
+
     row = _extraction_result_to_row_dict(result)
-    # Reflect validate.py's verdict in the row too — it can catch
-    # things (arithmetic mismatches, missing PO) that extract.py's
-    # own confidence gate never sees.
     row["needs_review"] = validation.needs_review
-    row["disagreements"] = list(dict.fromkeys(result.disagreements + validation.reasons))
+    row["validation_reasons"] = validation.reasons
+    row["disagreements"] = list(
+        dict.fromkeys(result.disagreements + validation.reasons)
+    )
+
 
     spreadsheet_id = _get_spreadsheet_id()
     vendor_name = result.fields.get("vendor_name").value if "vendor_name" in result.fields else ""
